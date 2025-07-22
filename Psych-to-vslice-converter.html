@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>VSlice Convertidor</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f0f0f;
+      color: #fff;
+      padding: 2rem;
+      max-width: 900px;
+      margin: auto;
+    }
+
+    h1, h2 {
+      color: #00ffa5;
+    }
+
+    section {
+      background: #1a1a1a;
+      padding: 1.5rem;
+      border-radius: 10px;
+      margin-bottom: 2rem;
+      box-shadow: 0 0 10px #00ffa580;
+    }
+
+    input[type="file"], button {
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: none;
+      font-size: 1rem;
+    }
+
+    button {
+      background: #00ffa5;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    pre {
+      background: #121212;
+      padding: 1rem;
+      overflow-x: auto;
+      border-radius: 8px;
+      margin-top: 1rem;
+      max-height: 300px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎧 VSlice Convertidor Web</h1>
+
+  <!-- CHART CONVERTER -->
+  <section>
+    <h2>🎵 Convertir Chart Psych Engine a VSlice</h2>
+    <input type="file" id="chartInput" accept=".json"><br>
+    <button onclick="downloadChart()">Descargar Chart</button>
+    <pre id="chartOutput"></pre>
+  </section>
+
+  <!-- STAGE CONVERTER -->
+  <section>
+    <h2>🎭 Convertir Stage Psych Engine a VSlice</h2>
+    <label>Archivo JSON del stage:</label><br>
+    <input type="file" id="stageJson"><br>
+    <label>Archivo LUA del stage:</label><br>
+    <input type="file" id="stageLua"><br>
+    <button onclick="convertStage()">Convertir y Descargar Stage</button>
+    <pre id="stageOutput"></pre>
+  </section>
+
+  <script>
+    let chartResult = "";
+    let stageJSON = null;
+    let stageLUA = null;
+
+    // === CHART ===
+    document.getElementById('chartInput').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          const converted = convertChart(data);
+          chartResult = JSON.stringify(converted, null, 2);
+          document.getElementById('chartOutput').textContent = chartResult;
+        } catch (err) {
+          document.getElementById('chartOutput').textContent = "❌ Error: " + err.message;
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    function convertChart(psychChart) {
+      const vslice = {
+        notes: { hard: [] },
+        generatedBy: "Friday Night Funkin' - v0.6.0 (rewrite/master:869726f) PROTOTYPE"
+      };
+
+      const sections = psychChart.song?.notes || [];
+      for (const section of sections) {
+        const mustHit = section.mustHitSection ?? true;
+        for (const note of section.sectionNotes || []) {
+          if (note.length >= 3) {
+            const [time, dir, len] = note;
+            const d = mustHit ? dir : dir + 4;
+            vslice.notes.hard.push({
+              t: parseFloat(Number(time).toFixed(4)),
+              d,
+              ...(len > 0 ? { l: parseFloat(Number(len).toFixed(4)) } : {})
+            });
+          }
+        }
+      }
+
+      return vslice;
+    }
+
+    function downloadChart() {
+      if (!chartResult) return;
+      const blob = new Blob([chartResult], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "vslice-chart.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // === STAGE ===
+    document.getElementById('stageJson').addEventListener('change', e => {
+      const reader = new FileReader();
+      reader.onload = event => stageJSON = JSON.parse(event.target.result);
+      reader.readAsText(e.target.files[0]);
+    });
+
+    document.getElementById('stageLua').addEventListener('change', e => {
+      const reader = new FileReader();
+      reader.onload = event => stageLUA = event.target.result;
+      reader.readAsText(e.target.files[0]);
+    });
+
+    function convertStage() {
+      if (!stageJSON || !stageLUA) {
+        alert("Subí ambos archivos primero (.json y .lua).");
+        return;
+      }
+
+      const props = {};
+      const lua = stageLUA;
+
+      const animRegex = /makeAnimatedLuaSprite\(['"](\w+)['"],\s*['"]([\w\/]+)['"],\s*(-?\d+),\s*(-?\d+)/g;
+      const spriteRegex = /makeLuaSprite\(['"](\w+)['"],\s*['"]([\w\/]+)['"],\s*(-?\d+),\s*(-?\d+)/g;
+      const scaleRegex = /scaleObject\(['"](\w+)['"],\s*([0-9.]+),\s*([0-9.]+)/g;
+      const zIndexRegex = /setObjectOrder\(['"](\w+)['"],\s*(\d+)/g;
+      const animAddRegex = /addAnimationByPrefix\(['"](\w+)['"],\s*['"](\w+)['"],\s*['"]([^'"]+)['"],\s*([0-9.]+),\s*(true|false)/g;
+
+      const createProp = (name, asset, x, y, animated = false) => {
+        props[name] = {
+          name,
+          assetPath: asset,
+          position: [parseInt(x), parseInt(y)],
+          scale: [1, 1],
+          zIndex: 0,
+          scroll: [1, 1],
+          isPixel: false,
+          animType: "sparrow",
+          animations: [],
+          ...(animated ? { startingAnimation: undefined } : {})
+        };
+      };
+
+      for (const m of lua.matchAll(animRegex)) createProp(m[1], m[2], m[3], m[4], true);
+      for (const m of lua.matchAll(spriteRegex)) if (!props[m[1]]) createProp(m[1], m[2], m[3], m[4]);
+
+      for (const m of lua.matchAll(scaleRegex)) if (props[m[1]]) props[m[1]].scale = [parseFloat(m[2]), parseFloat(m[3])];
+      for (const m of lua.matchAll(zIndexRegex)) if (props[m[1]]) props[m[1]].zIndex = parseInt(m[2]);
+
+      for (const m of lua.matchAll(animAddRegex)) {
+        const [_, target, name, prefix, fr, loop] = m;
+        if (props[target]) {
+          props[target].animations.push({
+            name,
+            prefix,
+            frameRate: parseFloat(fr),
+            looped: loop === "true",
+            offsets: [0, 0],
+            flipX: false,
+            flipY: false
+          });
+          props[target].startingAnimation = name;
+        }
+      }
+
+      const finalStage = {
+        version: "1.0.0",
+        cameraZoom: stageJSON.defaultZoom || 0.9,
+        props: Object.values(props),
+        directory: "Stage Converted from Psych Engine",
+        characters: {
+          bf: {
+            zIndex: 300,
+            position: stageJSON.boyfriend || [0, 0],
+            cameraOffsets: stageJSON.camera_boyfriend || [0, 0]
+          },
+          gf: {
+            zIndex: 100,
+            position: stageJSON.girlfriend || [0, 0],
+            cameraOffsets: stageJSON.camera_girlfriend || [0, 0]
+          },
+          dad: {
+            zIndex: 200,
+            position: stageJSON.opponent || [0, 0],
+            cameraOffsets: stageJSON.camera_opponent || [0, 0]
+          }
+        },
+        name: "Stage from Psych"
+      };
+
+      const output = JSON.stringify(finalStage, null, 2);
+      document.getElementById("stageOutput").textContent = output;
+
+      const blob = new Blob([output], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "vslice-stage.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+
+</body>
+</html>
